@@ -28,11 +28,11 @@ struct DashboardSummary: Decodable {
     let targetProtein: Double?
     let targetCarbs: Double?
     let targetFat: Double?
-    let targetSteps: Int
+    @LenientRequiredInt var targetSteps: Int
     let targetActiveCalories: Double
     let targetSleepDuration: Double
     let targetActiveMinutes: Double
-    let targetWaterMl: Int
+    @LenientRequiredInt var targetWaterMl: Int
     let bmr: Double
 
     // Bilans kaloryczny dnia
@@ -45,7 +45,7 @@ struct DashboardSummary: Decodable {
     let eatenFat: Double
 
     // Aktywność
-    let steps: Int
+    @LenientRequiredInt var steps: Int
     let activeMinutes: Double
     let workouts: [Workout]
     let lastSync: String?
@@ -70,7 +70,7 @@ struct DashboardSummary: Decodable {
     // `var`, nie `let`: po `POST /api/water/add|reset` aktualizujemy tę
     // wartość lokalnie z odpowiedzi endpointu, bez ponownego odpytywania
     // całego /api/dashboard (patrz `DashboardViewModel.addWater`).
-    var waterMl: Int
+    @LenientRequiredInt var waterMl: Int
 
     // Flagi podłączonych integracji
     let hasOura: Bool

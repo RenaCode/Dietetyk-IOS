@@ -1,14 +1,19 @@
 import Foundation
 
 /// Pojedynczy zidentyfikowany składnik posiłku (z analizy AI).
+/// UWAGA: całe `food_items[]` idzie PROSTO z odpowiedzi modelu AI - backend
+/// sanityzuje (`utils/mealSanitize.js`) tylko makro NA POZIOMIE POSIŁKU, nie
+/// poszczególne składniki. Model potrafi oddać `"15"` albo `"15 g"` zamiast
+/// liczby, a jeden taki składnik wywaliłby dekodowanie CAŁEJ listy posiłków -
+/// stąd `@LenientDouble`, patrz `Networking/LenientNumbers.swift`.
 struct FoodItem: Codable, Identifiable, Hashable {
     var id = UUID()
     let name: String?
     let portion: String?
-    let calories: Double?
-    let protein: Double?
-    let carbs: Double?
-    let fat: Double?
+    @LenientDouble var calories: Double?
+    @LenientDouble var protein: Double?
+    @LenientDouble var carbs: Double?
+    @LenientDouble var fat: Double?
 
     // `id` jest lokalny (UUID), nie przychodzi z backendu - wykluczony z
     // CodingKeys, więc Decodable użyje wartości domyślnej z deklaracji
@@ -36,7 +41,13 @@ struct Meal: Codable, Identifiable, Hashable {
     let fat: Double?
     let foodItems: [FoodItem]?
     let dieticianComment: String?
-    let healthRating: Int?
+    // Prompt prosi model o liczbę całkowitą 1-10, ale `health_rating` jako
+    // JEDYNE pole analizy NIE przechodzi przez `sanitizeNumber` w
+    // `backend/routes/meals.js` - do odpowiedzi trafia dokładnie to, co oddał
+    // model. `7.5` albo `"8"` wywalało dekodowanie całej listy posiłków, a
+    // ponieważ posiłki są zagnieżdżone w `/api/dashboard`, razem z nią ginął
+    // też Dashboard.
+    @LenientInt var healthRating: Int?
     // Tylko w odpowiedzi POST /api/meals przy rozpoznaniu zdjęcia z wieloma
     // sekcjami (np. "Śniadanie"/"Obiad"/"Kolacja") - brak w GET /api/meals.
     let name: String?
