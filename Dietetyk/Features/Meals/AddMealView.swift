@@ -79,12 +79,27 @@ struct AddMealView: View {
                 }
             }
             .disabled(viewModel.isSaving)
+            // Wczytanie zdjęcia z galerii potrafi się nie udać (plik w iCloud
+            // bez pobranej kopii, uszkodzony/nieobsługiwany format, cofnięta
+            // zgoda). Wcześniej `try?` + `guard ... else { return }` połykały
+            // każdy z tych przypadków bez śladu: użytkownik wybierał zdjęcie,
+            // arkusz nie pokazywał NICZEGO i nie było wiadomo, czy zdjęcie
+            // zostało dodane. Teraz każdy nieudany odczyt kończy się
+            // komunikatem w tej samej sekcji błędów, co reszta ekranu.
             .onChange(of: photoPickerItem) { _, newItem in
+                guard let newItem else { return }
                 Task {
-                    guard let newItem,
-                          let data = try? await newItem.loadTransferable(type: Data.self),
-                          let uiImage = UIImage(data: data) else { return }
-                    viewModel.selectedImage = uiImage
+                    do {
+                        guard let data = try await newItem.loadTransferable(type: Data.self),
+                              let uiImage = UIImage(data: data) else {
+                            viewModel.errorMessage = "Nie udało się wczytać wybranego zdjęcia. Wybierz inne albo zrób nowe aparatem."
+                            return
+                        }
+                        viewModel.selectedImage = uiImage
+                        viewModel.errorMessage = nil
+                    } catch {
+                        viewModel.errorMessage = "Nie udało się wczytać wybranego zdjęcia: \(error.localizedDescription)"
+                    }
                 }
             }
             .fullScreenCover(isPresented: $showCamera) {

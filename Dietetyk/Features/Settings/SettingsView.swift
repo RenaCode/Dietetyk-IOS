@@ -82,7 +82,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Adres serwera") {
+                Section {
                     TextField("https://moj-serwer.pl", text: $viewModel.serverURLText)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
@@ -95,6 +95,10 @@ struct SettingsView: View {
                         viewModel.resetServerURL()
                     }
                     .foregroundStyle(.secondary)
+                } header: {
+                    Text("Adres serwera")
+                } footer: {
+                    Text("Zmiana adresu wylogowuje - token sesji należy do konkretnego serwera i nie jest wysyłany do innego.")
                 }
 
                 if let errorMessage = viewModel.errorMessage {

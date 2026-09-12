@@ -25,13 +25,24 @@ enum APIConfig {
         }
     }
 
+    /// Schematy, pod które w ogóle da się wysłać żądanie HTTP. `http` zostaje
+    /// dla lokalnego developmentu, ale ATS (domyślnie włączone, apka nie ma
+    /// żadnego wyjątku w Info.plist) i tak zablokuje zwykłe `http` poza
+    /// localhostem. Sprawdzenie `scheme != nil` było za słabe: przepuszczało
+    /// `file:`, `ftp:` czy dowolny custom scheme, po którym każde żądanie
+    /// kończyło się mętnym błędem sieci zamiast czytelnym "zły adres".
+    private static let allowedSchemes: Set<String> = ["https", "http"]
+
     /// Waliduje i zapisuje nowy adres backendu podany przez użytkownika w Ustawieniach.
-    /// Zwraca `false` (i nie zapisuje nic), jeśli string nie jest poprawnym URL-em
-    /// ze schematem i hostem (np. "https://moj-serwer.pl").
+    /// Zwraca `false` (i nie zapisuje nic), jeśli string nie jest poprawnym adresem
+    /// http/https z hostem (np. "https://moj-serwer.pl").
     @discardableResult
     static func setBaseURLString(_ string: String) -> Bool {
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), url.scheme != nil, url.host != nil else {
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              allowedSchemes.contains(scheme),
+              url.host != nil else {
             return false
         }
         baseURL = url

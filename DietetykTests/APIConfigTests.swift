@@ -34,6 +34,27 @@ final class APIConfigTests: XCTestCase {
         XCTAssertFalse(ok)
     }
 
+    /// Sam `scheme != nil` przepuszczał `file:`/`ftp:`/dowolny custom scheme -
+    /// adres zapisywał się, a każde żądanie kończyło się potem mętnym błędem
+    /// sieci zamiast czytelnym "nieprawidłowy adres serwera".
+    func testSetBaseURLStringRejectsNonHTTPSchemes() {
+        XCTAssertFalse(APIConfig.setBaseURLString("ftp://example.com"))
+        XCTAssertFalse(APIConfig.setBaseURLString("file:///etc/passwd"))
+        XCTAssertFalse(APIConfig.setBaseURLString("dietetyk://example.com"))
+    }
+
+    /// `http` zostaje dopuszczony świadomie - na potrzeby lokalnego
+    /// developmentu przeciw `http://localhost:3000`.
+    func testSetBaseURLStringAcceptsHTTPForLocalDevelopment() {
+        XCTAssertTrue(APIConfig.setBaseURLString("http://localhost:3000"))
+        XCTAssertEqual(APIConfig.baseURL.absoluteString, "http://localhost:3000")
+    }
+
+    /// Schemat pisany wielkimi literami to wciąż ten sam schemat.
+    func testSetBaseURLStringAcceptsUppercaseScheme() {
+        XCTAssertTrue(APIConfig.setBaseURLString("HTTPS://example.com"))
+    }
+
     func testInvalidURLDoesNotOverwritePreviouslyStoredValue() {
         XCTAssertTrue(APIConfig.setBaseURLString("https://dobry-serwer.pl"))
         XCTAssertFalse(APIConfig.setBaseURLString("zly url"))

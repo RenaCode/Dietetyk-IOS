@@ -89,19 +89,38 @@ final class SettingsViewModel: ObservableObject {
 
     /// Zwraca `false`, jeśli wpisany adres nie jest poprawnym URL-em -
     /// widok wtedy pokazuje błąd i nie zamyka edycji.
+    ///
+    /// Zmiana adresu WYLOGOWUJE. Token sesji z Keychain jest wystawiony przez
+    /// konkretny backend i `APIClient` dokleja go jako `Authorization: Bearer`
+    /// do KAŻDEGO żądania pod aktualny `APIConfig.baseURL`. Bez tego czyszczenia
+    /// wystarczyło namówić użytkownika na wpisanie cudzego adresu w Ustawieniach,
+    /// żeby apka sama wysłała żywy token sesji produkcyjnego konta na obcy host
+    /// (pierwszym żądaniem po zmianie - np. automatycznym `/api/settings` przy
+    /// synchronizacji Apple Health).
     @discardableResult
     func saveServerURL() -> Bool {
+        let previousURL = APIConfig.baseURL
         guard APIConfig.setBaseURLString(serverURLText) else {
-            errorMessage = "Nieprawidłowy adres serwera. Podaj pełny URL, np. https://moj-serwer.pl"
+            errorMessage = "Nieprawidłowy adres serwera. Podaj pełny adres https, np. https://moj-serwer.pl"
             return false
+        }
+        if APIConfig.baseURL != previousURL {
+            // Wraca na ekran logowania - token poprzedniego serwera jest tu bezużyteczny.
+            appState.requireReauth()
+            return true
         }
         successMessage = "Adres serwera zapisany."
         return true
     }
 
     func resetServerURL() {
+        let previousURL = APIConfig.baseURL
         APIConfig.resetToDefault()
         serverURLText = APIConfig.baseURL.absoluteString
+        // Powrót na domyślny backend to też zmiana serwera - patrz `saveServerURL`.
+        if APIConfig.baseURL != previousURL {
+            appState.requireReauth()
+        }
     }
 
     func logout() {
