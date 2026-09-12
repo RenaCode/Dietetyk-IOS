@@ -100,14 +100,22 @@ actor HealthSyncService {
         let workouts = try await fetchWorkouts(start: start, end: end)
         data.workouts = workouts.map(Self.makeExportWorkout)
 
-        defer { HealthSyncPreferences.lastSyncDate = Date() }
-
+        // "Ostatnia synchronizacja" stemplujemy WYŁĄCZNIE po udanym wysłaniu.
+        // Wcześniej stał tu `defer`, który wykonuje się także przy rzuceniu
+        // błędu - więc nieudany upload (brak sieci, 401, błąd serwera) i tak
+        // ustawiał znacznik na "teraz". W Ustawieniach wyglądało to na świeżą,
+        // udaną synchronizację, a w tle (`syncIfEnabled` oraz handler
+        // `HKObserverQuery` - oba połykają błąd przez `try?`) nie było ŻADNEGO
+        // innego sygnału, że dane od dni nie docierają do backendu.
         guard !data.metrics.isEmpty || !data.workouts.isEmpty else {
+            // Brak nowych danych to poprawny wynik synchronizacji, nie błąd.
+            HealthSyncPreferences.lastSyncDate = Date()
             return 0
         }
 
         let request = HealthExportPayload(data: data)
         _ = try await APIClient.shared.syncAppleHealth(syncToken: token, payload: request)
+        HealthSyncPreferences.lastSyncDate = Date()
 
         return data.metrics.reduce(0) { $0 + $1.data.count } + data.workouts.count
     }
