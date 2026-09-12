@@ -36,10 +36,14 @@ struct AddMealView: View {
                             photoPickerItem = nil
                         }
                     }
-                    Button {
-                        showCamera = true
-                    } label: {
-                        Label("Zrób zdjęcie", systemImage: "camera")
+                    // Bez aparatu (symulator, część iPadów) ten przycisk nie ma
+                    // czego otworzyć - patrz `CameraPicker.isCameraAvailable`.
+                    if CameraPicker.isCameraAvailable {
+                        Button {
+                            showCamera = true
+                        } label: {
+                            Label("Zrób zdjęcie", systemImage: "camera")
+                        }
                     }
                     PhotosPicker(selection: $photoPickerItem, matching: .images) {
                         Label("Wybierz z galerii", systemImage: "photo.on.rectangle")

@@ -8,9 +8,20 @@ struct CameraPicker: UIViewControllerRepresentable {
     @Binding var image: UIImage?
     @Binding var isPresented: Bool
 
+    /// Aparat nie istnieje na symulatorze ani na części iPadów. Dokumentacja
+    /// `UIImagePickerController` wymaga sprawdzenia dostępności ZANIM ustawi
+    /// się `sourceType` - przypisanie niedostępnego źródła jest błędem
+    /// programisty i kończy się wyjątkiem w czasie działania, a nie pustym
+    /// ekranem. Tu schodzimy wtedy do biblioteki zdjęć; `AddMealView` i tak
+    /// chowa przycisk "Zrób zdjęcie", więc w praktyce to zabezpieczenie
+    /// drugiego rzutu.
+    static var isCameraAvailable: Bool {
+        UIImagePickerController.isSourceTypeAvailable(.camera)
+    }
+
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
-        picker.sourceType = .camera
+        picker.sourceType = Self.isCameraAvailable ? .camera : .photoLibrary
         picker.delegate = context.coordinator
         return picker
     }
