@@ -28,16 +28,17 @@ jobs:
       - name: Checkout kodu
         uses: actions/checkout@v5
 
-      # Xcode 16.4 - domyślna wersja na obrazie macos-15, z preinstalowanym
-      # i gotowym do bootowania symulatorem iOS 18.5 ("iPhone 16"). Starsze
-      # 16.x (np. 16.2) są też zainstalowane, ale ich symulatory NIE są
-      # pre-bootowane na tym obrazie - `xcodebuild test` (w odróżnieniu od
-      # samego build) wymaga realnie dostępnego symulatora, więc pinujemy
-      # wersję zgodną z tym, co runner faktycznie ma przygotowane.
+      # Wersja Xcode NIE jest już pinowana na '16.4'. Poprzedni pin opierał się
+      # na założeniu, że obraz macos-15 trzyma pod Xcode 16.4 gotowy symulator
+      # iOS 18.5 - to przestało być prawdą: GitHub usunął z obrazu stare runtimy
+      # symulatora, przez co 2026-09-12 `xcodebuild test` przewrócił się na
+      # "Unable to find a device matching ... name:iPhone 16" (run 34676524825),
+      # wypisując jako jedyne dostępne cele macOS i placeholdery. Bierzemy
+      # najnowszy stabilny Xcode z obrazu - ten ZAWSZE ma pasujący runtime.
       - name: Wybór wersji Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '16.4'
+          xcode-version: latest-stable
 
       # Projekt nie trzyma commitowanego .xcodeproj (zob. .gitignore) -
       # generujemy go z project.yml, tak samo jak deweloper robi to lokalnie.
@@ -47,11 +48,80 @@ jobs:
       - name: Generowanie projektu Xcode (xcodegen)
         run: xcodegen generate
 
+      # Nazwa urządzenia ("iPhone 16") była wpisana na sztywno i to właśnie ona
+      # wysadziła CI, gdy obraz runnera przestał ją zawierać. Zamiast zgadywać
+      # nazwę, pytamy runner, CO faktycznie ma, i - gdyby nie miał gotowego
+      # urządzenia - tworzymy je z zainstalowanego runtime'u. Do `xcodebuild`
+      # idzie konkretny UDID, więc nie ma już dopasowywania po nazwie.
+      #
+      # Krok CELOWO kończy się błędem, gdy nie da się dostać żadnego symulatora
+      # iPhone: `xcodebuild test` bez symulatora i tak nie uruchomi testów, a
+      # cicha zamiana na sam `build` udawałaby, że testy przeszły.
+      - name: Wybór symulatora iOS (dynamicznie, bez wpisanej nazwy)
+        id: simulator
+        run: |
+          set -euo pipefail
+          echo "Dostępne runtimy i urządzenia na tym obrazie runnera:"
+          xcrun simctl list runtimes available || true
+          xcrun simctl list devices available || true
+
+          UDID="$(python3 <<'PY'
+          import json, subprocess, sys
+
+          def simctl(*args):
+              return json.loads(subprocess.check_output(["xcrun", "simctl", "list", "-j", *args]))
+
+          def ios_version(runtime_id):
+              # com.apple.CoreSimulator.SimRuntime.iOS-18-5 -> (18, 5)
+              tail = runtime_id.rsplit(".", 1)[-1]
+              return tuple(int(p) for p in tail.split("-")[1:] if p.isdigit())
+
+          # 1. Urządzenie iPhone już przygotowane w obrazie - bierzemy z najnowszego iOS.
+          best = None
+          for runtime_id, devices in simctl("devices", "available")["devices"].items():
+              if "SimRuntime.iOS-" not in runtime_id:
+                  continue
+              for device in devices:
+                  if not device.get("isAvailable") or not device["name"].startswith("iPhone"):
+                      continue
+                  candidate = (ios_version(runtime_id), device["udid"], device["name"])
+                  if best is None or candidate[0] > best[0]:
+                      best = candidate
+          if best is not None:
+              print(best[1])
+              sys.exit(0)
+
+          # 2. Brak gotowego urządzenia, ale jest runtime - tworzymy własne.
+          runtimes = [r for r in simctl("runtimes", "available")["runtimes"]
+                      if r.get("isAvailable") and r["identifier"].startswith(
+                          "com.apple.CoreSimulator.SimRuntime.iOS-")]
+          if not runtimes:
+              sys.exit("Obraz runnera nie ma ŻADNEGO dostępnego runtime'u iOS - testów nie da się uruchomić.")
+          runtime = max(runtimes, key=lambda r: ios_version(r["identifier"]))
+
+          supported = set(runtime.get("supportedDeviceTypes") and
+                          [d["identifier"] for d in runtime["supportedDeviceTypes"]] or [])
+          iphones = [d for d in simctl("devicetypes")["devicetypes"]
+                     if d["name"].startswith("iPhone") and (not supported or d["identifier"] in supported)]
+          if not iphones:
+              sys.exit("Brak typu urządzenia iPhone zgodnego z runtimem %s." % runtime["identifier"])
+
+          udid = subprocess.check_output(
+              ["xcrun", "simctl", "create", "ci-iphone",
+               iphones[-1]["identifier"], runtime["identifier"]]).decode().strip()
+          print(udid)
+          PY
+          )"
+
+          echo "Wybrany symulator: $UDID"
+          xcrun simctl boot "$UDID" || true
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+
       - name: Build + testy jednostkowe (symulator, bez podpisywania)
         run: |
           xcodebuild test \
             -project Dietetyk.xcodeproj \
             -scheme Dietetyk \
-            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -destination "id=${{ steps.simulator.outputs.udid }}" \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO
