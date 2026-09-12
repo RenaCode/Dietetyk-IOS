@@ -34,7 +34,7 @@ final class LoginViewModel: ObservableObject {
         guard canSubmitCredentials else { return }
         await run {
             let outcome = try await APIClient.shared.login(username: self.username, password: self.password)
-            self.handle(outcome)
+            try self.handle(outcome)
         }
     }
 
@@ -42,7 +42,7 @@ final class LoginViewModel: ObservableObject {
         guard case .twoFactorCode(let tempToken) = stage, !code.isEmpty else { return }
         await run {
             let token = try await APIClient.shared.loginTwoFactor(tempToken: tempToken, code: self.code)
-            self.appState.markAuthenticated(token: token)
+            try self.appState.markAuthenticated(token: token)
         }
     }
 
@@ -50,7 +50,7 @@ final class LoginViewModel: ObservableObject {
         guard case .twoFactorSetup(let tempToken, _, _) = stage, !code.isEmpty else { return }
         await run {
             let token = try await APIClient.shared.verifyTwoFactorSetup(tempToken: tempToken, code: self.code)
-            self.appState.markAuthenticated(token: token)
+            try self.appState.markAuthenticated(token: token)
         }
     }
 
@@ -66,7 +66,7 @@ final class LoginViewModel: ObservableObject {
         }
         await run {
             let outcome = try await APIClient.shared.changePasswordForced(tempToken: tempToken, newPassword: self.newPassword)
-            self.handle(outcome)
+            try self.handle(outcome)
         }
     }
 
@@ -80,10 +80,10 @@ final class LoginViewModel: ObservableObject {
         errorMessage = nil
     }
 
-    private func handle(_ outcome: LoginOutcome) {
+    private func handle(_ outcome: LoginOutcome) throws {
         switch outcome {
         case .authenticated(let token):
-            appState.markAuthenticated(token: token)
+            try appState.markAuthenticated(token: token)
         case .requiresTwoFactor(let tempToken):
             stage = .twoFactorCode(tempToken: tempToken)
             code = ""

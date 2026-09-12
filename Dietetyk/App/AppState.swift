@@ -8,16 +8,27 @@ import Foundation
 final class AppState: ObservableObject {
     @Published private(set) var isAuthenticated: Bool
 
-    init() {
+    /// Wstrzykiwalne, żeby testy mogły sprawdzić logikę sesji bez Keychain -
+    /// patrz `SessionTokenStore`. Produkcyjnie zawsze Keychain.
+    private let tokenStore: SessionTokenStore
+
+    init(tokenStore: SessionTokenStore = KeychainSessionTokenStore()) {
+        self.tokenStore = tokenStore
         // Auto-login: jeśli w Keychain jest token z poprzedniej sesji,
         // zakładamy że jest wciąż ważny - dopiero pierwsze żądanie do
         // backendu faktycznie to zweryfikuje. 401 wywoła `requireReauth()`
         // i wróci do ekranu logowania.
-        self.isAuthenticated = KeychainStore.hasToken
+        self.isAuthenticated = tokenStore.load() != nil
     }
 
-    func markAuthenticated(token: String) {
-        KeychainStore.saveToken(token)
+    /// Rzuca, gdy tokenu NIE udało się zapisać. Wcześniej wynik zapisu był
+    /// ignorowany i apka przechodziła na ekran główny z pustym Keychainem -
+    /// każde żądanie wracało wtedy z 401, a użytkownik widział "Sesja
+    /// wygasła" tuż po poprawnym zalogowaniu, bez żadnej wskazówki dlaczego.
+    func markAuthenticated(token: String) throws {
+        guard tokenStore.save(token) else {
+            throw AppStateError.tokenStorageFailed
+        }
         isAuthenticated = true
     }
 
@@ -26,7 +37,7 @@ final class AppState: ObservableObject {
         Task {
             try? await APIClient.shared.logout()
         }
-        KeychainStore.deleteToken()
+        tokenStore.delete()
         isAuthenticated = false
     }
 
@@ -35,7 +46,18 @@ final class AppState: ObservableObject {
     /// lokalny token i wraca do ekranu logowania bez dodatkowego wołania
     /// `/api/logout` (token i tak już nie działa).
     func requireReauth() {
-        KeychainStore.deleteToken()
+        tokenStore.delete()
         isAuthenticated = false
+    }
+}
+
+enum AppStateError: LocalizedError {
+    case tokenStorageFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .tokenStorageFailed:
+            return "Nie udało się bezpiecznie zapisać sesji na urządzeniu. Spróbuj zalogować się ponownie."
+        }
     }
 }

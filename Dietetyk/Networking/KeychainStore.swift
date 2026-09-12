@@ -16,7 +16,14 @@ enum KeychainStore {
         ]
     }
 
-    static func saveToken(_ token: String) {
+    /// Zwraca `false`, gdy Keychain odmówił zapisu. Wcześniej wynik `SecItemAdd`
+    /// był ignorowany, a zapis potrafi realnie się nie udać - build bez podpisu
+    /// (`CODE_SIGNING_ALLOWED=NO`, czyli m.in. cały nasz CI) nie ma uprawnienia
+    /// do Keychain i dostaje `errSecMissingEntitlement`. Aplikacja uznawała
+    /// wtedy użytkownika za zalogowanego, mimo że token nigdzie nie trafił, i
+    /// każde kolejne żądanie wracało z 401.
+    @discardableResult
+    static func saveToken(_ token: String) -> Bool {
         let data = Data(token.utf8)
 
         // Usuń istniejący wpis przed zapisem nowego - prościej i bardziej
@@ -30,7 +37,7 @@ enum KeychainStore {
         // odczytać token bez wymogu, by urządzenie było aktualnie odblokowane.
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
 
-        SecItemAdd(attributes as CFDictionary, nil)
+        return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
     }
 
     static func loadToken() -> String? {
@@ -56,4 +63,23 @@ enum KeychainStore {
     static var hasToken: Bool {
         loadToken() != nil
     }
+}
+
+/// Miejsce przechowywania tokenu sesji. Istnieje po to, żeby `AppState` dało
+/// się przetestować bez Keychain: w buildzie bez podpisu (CI) `SecItemAdd`
+/// zwraca `errSecMissingEntitlement`, więc test oparty o prawdziwy Keychain
+/// nie sprawdzałby logiki wylogowania, tylko obecność uprawnień.
+protocol SessionTokenStore {
+    /// `false`, jeśli zapis się nie powiódł.
+    @discardableResult
+    func save(_ token: String) -> Bool
+    func load() -> String?
+    func delete()
+}
+
+/// Produkcyjna implementacja - Keychain.
+struct KeychainSessionTokenStore: SessionTokenStore {
+    func save(_ token: String) -> Bool { KeychainStore.saveToken(token) }
+    func load() -> String? { KeychainStore.loadToken() }
+    func delete() { KeychainStore.deleteToken() }
 }
