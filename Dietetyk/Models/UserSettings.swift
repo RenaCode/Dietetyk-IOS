@@ -7,6 +7,20 @@ import Foundation
 /// jak `oura_client_id`, zamaskowane sekrety jak `gemini_api_key: "********"`
 /// itd.). Modelujemy tu tylko pola istotne dla tej apki (cele + token synchro
 /// Apple Health) - dekodowanie po prostu ignoruje resztę kluczy.
+///
+/// UWAGA na TYPY: wartości w tabeli `settings` są trzymane jako tekst, a
+/// backend zgaduje typ przy odczycie (`isNaN(r.value) ? r.value : Number(r.value)`
+/// w `backend/routes/account.js`). Cel, który użytkownik WYCZYŚCIŁ w webowym
+/// UI, jest tam zapisany jako pusty string i - świadomie, patrz komentarz przy
+/// `r.value === ''` w tym samym pliku - wraca z API jako `""`, a NIE jako
+/// `null` ani brak klucza. Syntezowane `Decodable` przewracało się wtedy na
+/// `typeMismatch` i - ponieważ błąd dekodowania wywala CAŁY obiekt, nie jedno
+/// pole - zabierało ze sobą ekran Ustawień ORAZ synchronizację Apple Health
+/// (`HealthSyncService.syncNow()` zaczyna od `fetchSettings()`, żeby pobrać
+/// `sync_token`). Dlatego dekodujemy tu ręcznie i tolerancyjnie: liczba,
+/// liczba w stringu i pusty string/`null`/brak klucza są poprawnymi
+/// wejściami, a nieoczekiwany typ daje `nil` w JEDNYM polu zamiast błędu
+/// całego żądania.
 struct UserSettings: Decodable {
     let targetCalories: Double?
     let targetProtein: Double?
@@ -17,6 +31,46 @@ struct UserSettings: Decodable {
     /// (`backend/routes/appleHealth.js`), nigdy nie wysyłany z powrotem
     /// w żądaniu zapisu (patrz `UpdateSettingsRequest`).
     let syncToken: String?
+
+    // Nazwy case'ów (a nie ich wartości String) są celowo w camelCase -
+    // `JSONDecoder.keyDecodingStrategy = .convertFromSnakeCase` w `APIClient`
+    // przerabia klucz JSON `target_calories` na `targetCalories` ZANIM
+    // szuka go wśród CodingKeys. To ten sam mechanizm, z którego korzystało
+    // wcześniejsze, syntezowane `Decodable`.
+    private enum CodingKeys: String, CodingKey {
+        case targetCalories, targetProtein, targetCarbs, targetFat, targetWaterMl, syncToken
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        targetCalories = Self.number(container, .targetCalories)
+        targetProtein = Self.number(container, .targetProtein)
+        targetCarbs = Self.number(container, .targetCarbs)
+        targetFat = Self.number(container, .targetFat)
+        targetWaterMl = Self.number(container, .targetWaterMl)
+        syncToken = Self.string(container, .syncToken)
+    }
+
+    /// Liczba z pola, które backend może oddać jako liczbę, jako liczbę
+    /// w stringu ("2500"), jako pusty string (cel wyczyszczony) albo wcale.
+    private static func number(_ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> Double? {
+        guard container.contains(key), (try? container.decodeNil(forKey: key)) == false else { return nil }
+        if let value = try? container.decode(Double.self, forKey: key) { return value }
+        guard let raw = try? container.decode(String.self, forKey: key) else { return nil }
+        let normalized = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: ".")
+        return normalized.isEmpty ? nil : Double(normalized)
+    }
+
+    /// `sync_token` idzie prosto z kolumny `users.sync_token`, więc w praktyce
+    /// zawsze jest stringiem - ale gdyby kiedyś nie był, ma zniknąć tylko to
+    /// jedno pole. `HealthSyncService` zgłasza wtedy czytelne
+    /// `HealthSyncError.missingSyncToken` zamiast zdechnąć na dekodowaniu.
+    private static func string(_ container: KeyedDecodingContainer<CodingKeys>, _ key: CodingKeys) -> String? {
+        guard container.contains(key), (try? container.decodeNil(forKey: key)) == false else { return nil }
+        return try? container.decode(String.self, forKey: key)
+    }
 }
 
 /// Payload zapisu ustawień (`POST /api/settings`). Backend iteruje WSZYSTKIE
