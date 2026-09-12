@@ -70,6 +70,12 @@ Można go zmienić w aplikacji: ekran **Ustawienia → Adres serwera** (zapisywa
 `UserDefaults`, nie wymaga przebudowania apki — przydatne np. do testowania na własnym
 self-hosted backendzie albo przeciw `localhost` podczas developmentu).
 
+Przyjmowane są wyłącznie adresy `https` i `http` (to drugie na potrzeby lokalnego
+`http://localhost:3000` — ATS jest włączone i tak czy inaczej zablokuje zwykłe `http` poza
+localhostem). **Zmiana adresu wylogowuje**: token sesji z Keychain należy do konkretnego backendu,
+a `APIClient` dokleja go jako `Authorization: Bearer` do każdego żądania pod aktualny adres — bez
+czyszczenia tokenu wpisanie cudzego adresu wysłałoby żywy token produkcyjnego konta na obcy host.
+
 ## Architektura
 
 - **SwiftUI + MVVM** — każdy ekran ma `View` + `ObservableObject` ViewModel (`@MainActor`,
