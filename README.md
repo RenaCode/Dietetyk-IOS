@@ -1,135 +1,180 @@
 # Dietetyk iOS
 
-Natywny klient iOS (SwiftUI) dla [Dietetyk-AI](https://dietetyk.renacode.com) — apki do liczenia
-kalorii/makro z poradami AI. Ten projekt **nie jest jeszcze wdrażany produkcyjnie** — to szkielet
-przygotowany pod wdrożenie za kilka miesięcy.
+Native iOS client (SwiftUI) for [Dietetyk AI](https://github.com/RenaCode/Dietetyk-AI), a
+calorie and macro tracker with AI meal analysis and a daily health dashboard. The app is a thin
+client over the existing Dietetyk AI backend and adds native Apple Health (HealthKit) sync.
 
-## Status
+**Status:** pre-release (version 0.1.0). The app is not yet distributed through the App Store or
+TestFlight.
 
-Szkielet aplikacji: logowanie (z obsługą 2FA i wymuszonej zmiany hasła), dashboard (kalorie/makro,
-kroki/aktywność, sen/gotowość/HRV z Oura, skład ciała z Withings/Apple Health), lista i dodawanie
-posiłków (tekst + zdjęcie z analizą AI), licznik wody, ustawienia (cele, adres serwera, wylogowanie),
-**natywna synchronizacja Apple Health (HealthKit)** — patrz niżej.
+## Features
 
-### Synchronizacja Apple Health (HealthKit) — zastępstwo webhooka
+- **Sign-in** with username and password, including two-factor authentication (TOTP code,
+  first-time 2FA setup with QR code and secret) and the forced password change flow.
+- **Dashboard** for any day (previous/next day navigation):
+  - calories eaten vs. target, active and total calories burned (including BMR), net balance,
+  - macros (protein, carbs, fat) vs. targets,
+  - activity: steps and active minutes vs. targets, last sync time,
+  - water intake with quick-add buttons and reset,
+  - sleep and readiness (Oura): sleep score and duration, readiness, HRV, resting heart rate,
+  - body composition (Withings / Apple Health): weight, body fat, muscle mass,
+  - the AI dietitian's advice for the day and the list of the day's meals.
+- **Meals**: per-day list with total calories, swipe to delete, meal details (nutrition values,
+  ingredients, health rating, AI dietitian's comment). New meals are added from a text
+  description and/or a photo (camera or photo library). The backend's AI analyses the input and
+  may return several meals from a single photo.
+- **Settings**: profile (username, e-mail), daily goals (calories, protein, carbs, fat, water),
+  Apple Health sync, backend address, sign-out.
+- **Apple Health sync** (read-only, see below).
 
-Apka czyta natywnie z HealthKit (kroki, kalorie aktywne/spoczynkowe, minuty aktywności, dystans
-chód+bieg, temperatura nadgarstka, treningi) i wysyła te dane do **tego samego** endpointu, który
-dotąd przyjmował payloady z apki trzeciej firmy "Health Auto Export"
-(`POST /api/integrations/apple-health/:syncToken`, `backend/routes/appleHealth.js` w repo
-`Dietetyk-AI`) — backend nie wymaga żadnych zmian, liczy się tylko kształt JSON-a
-(`Models/HealthExportModels.swift` replikuje go 1:1).
+Not implemented yet: Google sign-in, admin panel, trends charts (`APIClient.fetchHealthHistory()`
+exists but has no screen), push notifications.
 
-- Włącza/wyłącza się w **Ustawienia → Synchronizacja zdrowia** (prosi o zgodę systemową przy
-  pierwszym włączeniu, potem działa bez dalszej interakcji).
-- Automatyczna synchronizacja: przy starcie/powrocie apki z tła oraz w tle przez
-  `HKObserverQuery` + `enableBackgroundDelivery` (`Health/HealthSyncService.swift`) — gdy
-  HealthKit dostanie nowe dane (np. z zegarka), apka sama je wysyła, bez potrzeby otwierania jej.
-  Jest też przycisk "Synchronizuj teraz" do ręcznego wywołania.
-- Token synchronizacji (`sync_token`) pobierany jest automatycznie z `/api/settings` — użytkownik
-  nie musi go nigdzie wpisywać.
-- Zakres metryk jest dokładnie taki, jaki backend już umie przetworzyć (`METRIC_FIELD_MAP` w
-  `appleHealth.js`) — wagi/składu ciała/snu ten webhook NIE obsługuje (to idzie innymi drogami,
-  np. Withings), więc HealthKit też ich tędy nie wysyła.
+## Apple Health (HealthKit) sync
 
-Po pierwszym wdrożeniu na realne urządzenie z Apple Watch/iPhone, ta funkcja pozwala całkowicie
-zrezygnować z konfigurowania automatyzacji w apce "Health Auto Export" — Dietetyk iOS staje się
-samodzielnym źródłem danych zdrowotnych.
+The app reads from HealthKit (it never writes to it) and sends the data to the same backend
+endpoint that accepts payloads from the third-party "Health Auto Export" app,
+`POST /api/integrations/apple-health/:syncToken`. `Models/HealthExportModels.swift` reproduces
+that JSON format, so the backend needs no changes and the app replaces the Health Auto Export
+automation.
 
-Nie zaimplementowane jeszcze (świadomie odłożone, do dodania przed wdrożeniem):
-- logowanie przez Google (wymaga `ASWebAuthenticationSession`),
-- panel administratora (Admin Panel),
-- wykresy trendów (Trends) — endpoint `/api/health/history` już obsłużony w `APIClient`, brak UI,
-- powiadomienia push.
+Data read from HealthKit:
 
-## Wymagania
+| HealthKit type | Sent as |
+|---|---|
+| `stepCount` | `step_count` |
+| `activeEnergyBurned` | `active_energy` |
+| `basalEnergyBurned` | `basal_energy_burned` |
+| `appleExerciseTime` | `apple_exercise_time` |
+| `distanceWalkingRunning` | `walking_running_distance` |
+| `appleSleepingWristTemperature` (Apple Watch Series 8+/Ultra) | `wrist_temperature` |
+| workouts (`HKWorkout`) | `workouts` |
 
-- macOS z Xcode 16+ (iOS 17 deployment target)
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen) — projekt **nie zawiera** commitowanego
-  `.xcodeproj` (plik binarny, konfliktogenny w git), generujemy go z `project.yml`:
+The backend accepts a few more metrics (for example water, resting heart rate and HRV) that the
+app does not send yet. Weight, body composition and sleep reach the backend through other
+integrations (Withings, Oura).
 
-  ```
+How it works:
+
+- Turned on and off in **Ustawienia → Synchronizacja zdrowia**. The system permission prompt
+  appears the first time it is turned on.
+- Each run syncs the last 14 days. The backend overwrites the same days, so repeated runs are safe.
+- Sync runs when the app starts and returns to the foreground. While it is enabled, an
+  `HKObserverQuery` with hourly background delivery (`enableBackgroundDelivery`) starts a sync
+  when new step, energy, exercise-time or distance samples arrive, without opening the app.
+  **Synchronizuj teraz** starts a sync manually.
+- The sync token (`sync_token`) is fetched automatically from `/api/settings`; the user does not
+  enter it anywhere.
+- The section is hidden on devices without Health data (for example some iPads).
+
+## Requirements
+
+- macOS with Xcode 16 or later. Deployment target: iOS 17.0, iPhone and iPad, portrait only.
+  Swift language version 5.9 (`SWIFT_VERSION` in `project.yml`).
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen). The repository does not commit the
+  `.xcodeproj` or the `.entitlements` file; both are generated from `project.yml`:
+
+  ```sh
   brew install xcodegen
   ```
 
-## Budowanie
+No third-party dependencies (no Swift packages or CocoaPods).
 
-```
-cd Dietetyk-iOS
+## Building
+
+```sh
+git clone https://github.com/RenaCode/Dietetyk-IOS.git
+cd Dietetyk-IOS
 xcodegen generate
 open Dietetyk.xcodeproj
 ```
 
-W Xcode: wybierz swój zespół deweloperski (Signing & Capabilities), wybierz symulator lub urządzenie
-i uruchom (Cmd+R).
+In Xcode, select your development team under Signing & Capabilities (`DEVELOPMENT_TEAM` is
+intentionally empty in `project.yml`), choose a simulator or device and run (Cmd+R). HealthKit
+with background delivery is enabled through the generated entitlements, so a device build needs a
+team that can use the HealthKit capability.
 
-## Konfiguracja adresu backendu
+## Tests and CI
 
-Domyślny adres backendu to `https://dietetyk.renacode.com` (patrz `Networking/APIConfig.swift`).
-Można go zmienić w aplikacji: ekran **Ustawienia → Adres serwera** (zapisywany lokalnie w
-`UserDefaults`, nie wymaga przebudowania apki — przydatne np. do testowania na własnym
-self-hosted backendzie albo przeciw `localhost` podczas developmentu).
+`DietetykTests/` holds unit tests for logic that needs no live HealthKit or network: API date
+formatting, backend address validation and token clearing when the address changes, the Health
+Auto Export payload encoding, sync service logic, settings decoding and lenient number decoding.
 
-Przyjmowane są wyłącznie adresy `https` i `http` (to drugie na potrzeby lokalnego
-`http://localhost:3000` — ATS jest włączone i tak czy inaczej zablokuje zwykłe `http` poza
-localhostem). **Zmiana adresu wylogowuje**: token sesji z Keychain należy do konkretnego backendu,
-a `APIClient` dokleja go jako `Authorization: Bearer` do każdego żądania pod aktualny adres — bez
-czyszczenia tokenu wpisanie cudzego adresu wysłałoby żywy token produkcyjnego konta na obcy host.
+Run them locally from Xcode (Cmd+U) or with `xcodebuild test -scheme Dietetyk` against a
+simulator. GitHub Actions (`.github/workflows/ci.yml`) runs on every push, on pull requests to
+`main` and manually. It uses `macos-15` with the latest stable Xcode, generates the project with
+XcodeGen, picks an available iPhone simulator at runtime and runs `xcodebuild test` without code
+signing.
 
-## Architektura
+## Backend address
 
-- **SwiftUI + MVVM** — każdy ekran ma `View` + `ObservableObject` ViewModel (`@MainActor`,
-  `@Published` stan), bez zewnętrznych frameworków DI/reaktywnych (Combine ograniczony do
-  `@Published`, networking przez `async/await`).
-- **Networking/APIClient.swift** — jeden, prosty klient HTTP nad `URLSession`, bez zewnętrznych
-  zależności (Alamofire itd. — niepotrzebne przy tej skali apki). Token sesji wysyłany jako
-  `Authorization: Bearer <token>` (zgodnie z `backend/middleware/auth.js` w repo Dietetyk-AI —
-  backend NIE używa cookies/sesji przeglądarki, tylko nagłówka Bearer, więc natywny klient nie
-  potrzebuje obsługi ciasteczek).
-- **Networking/KeychainStore.swift** — token sesji trzymany w Keychain (NIE w `UserDefaults` —
-  to jedyny element wymagający bezpiecznego storage; adres serwera i cele to dane nie-sekretne).
-- **Models/** — struktury `Codable` z `keyDecodingStrategy = .convertFromSnakeCase`, bo backend
-  zwraca JSON w `snake_case` (np. `target_calories`, `active_minutes`), a kod Swift ma być
-  idiomatycznie `camelCase` (`targetCalories`, `activeMinutes”) — mapowanie automatyczne, bez
-  ręcznych `CodingKeys` w każdym modelu.
-- Brak Core Data/SwiftData w tej wersji — apka jest "thin client" nad istniejącym backendem
-  (tak jak frontend webowy), dane nie są cache'owane trwale na urządzeniu. Można to dodać później,
-  jeśli potrzebny będzie pełny offline mode.
+The default backend is `https://dietetyk.renacode.com` (`Networking/APIConfig.swift`). It can be
+changed in the app under **Ustawienia → Adres serwera**, for example to point at a self-hosted
+backend or `http://localhost:3000` during development. The value is stored in `UserDefaults`, so no
+rebuild is needed; **Przywróć domyślny** restores the default.
 
-## Kontrakt API (backend `Dietetyk-AI`)
+Only `https` and `http` URLs with a host are accepted. App Transport Security is on with no
+exceptions, so plain `http` works only for localhost. **Changing the address signs you out:** the
+session token in the Keychain belongs to one backend, and keeping it would send a live token to a
+different host.
 
-Pełna referencja w kodzie — `Networking/APIClient.swift` ma jedną metodę na endpoint. Najważniejsze:
+## Architecture
 
-| Endpoint | Metoda | Auth | Opis |
+- **SwiftUI + MVVM.** Each screen has a `View` and a `@MainActor` `ObservableObject` view model
+  with `@Published` state. Networking uses `async/await`; no DI or reactive frameworks.
+- **`Networking/APIClient`**: a small HTTP client over `URLSession` with no external
+  dependencies. Endpoints are grouped in extensions (`APIClient+Auth`, `+Dashboard`, `+Meals`,
+  `+Settings`, `+Health`). The session token is sent as `Authorization: Bearer <token>`; the
+  backend does not use cookies.
+- **`Networking/KeychainStore`**: the session token lives in the Keychain. The backend address
+  and goals are not secret and live in `UserDefaults` or on the backend.
+- **`Models/`**: `Codable` structs decoded with `keyDecodingStrategy = .convertFromSnakeCase`
+  (backend `target_calories` becomes Swift `targetCalories`). Numeric fields are decoded
+  leniently (`LenientNumbers.swift`), so one unexpected value does not break a whole list.
+- **`Health/`**: `HealthKitManager` (authorization, types), `HealthSyncService` (an `actor` that
+  serialises manual and background syncs) and `HealthSyncPreferences`.
+- No Core Data or SwiftData. Data is not cached on the device, so the app needs the backend to be
+  reachable.
+
+## API used (backend `Dietetyk-AI`)
+
+| Endpoint | Method | Auth | Purpose |
 |---|---|---|---|
-| `/api/login` | POST | nie | `{username,password}` → `{token}` albo `{status:"require_2fa"\|"setup_2fa"\|"force_password_change", tempToken}` |
-| `/api/login-2fa` | POST | nie | `{tempToken,code}` → `{token}` |
-| `/api/verify-2fa-setup` | POST | nie | `{tempToken,code}` → `{token}` (pierwsza konfiguracja 2FA) |
-| `/api/change-password-forced` | POST | nie | `{tempToken,newPassword}` → `{token}` lub kolejny krok 2FA |
-| `/api/logout` | POST | tak | unieważnia token |
-| `/api/dashboard?date=YYYY-MM-DD` | GET | tak | podsumowanie dnia (kalorie/makro/zdrowie) + lista posiłków |
-| `/api/meals?date=YYYY-MM-DD` | GET | tak | lista posiłków danego dnia |
-| `/api/meals` | POST | tak | `{rawText?, image?(data URL base64), date?}` → analiza AI + zapis (może zwrócić wiele posiłków z jednego zdjęcia) |
-| `/api/meals/:id` | DELETE | tak | usuwa posiłek |
-| `/api/settings` | GET/POST | tak | cele kaloryczne/makro, sync_token (do Apple Health), klucze integracji |
-| `/api/user/profile` | GET/POST | tak | profil, e-mail, avatar, status 2FA/integracji |
-| `/api/water/add` `/api/water/reset` | POST | tak | licznik wypitej wody |
-| `/api/health/history` | GET | tak | 90 dni metryk zdrowotnych (do przyszłych Trends) |
+| `/api/login` | POST | no | `{username,password}` → `{token}` or `{status:"require_2fa"\|"setup_2fa"\|"force_password_change", tempToken}` |
+| `/api/login-2fa` | POST | no | `{tempToken,code}` → `{token}` |
+| `/api/verify-2fa-setup` | POST | no | `{tempToken,code}` → `{token}` (first 2FA setup) |
+| `/api/change-password-forced` | POST | no | `{tempToken,newPassword}` → `{token}` or the next 2FA step |
+| `/api/logout` | POST | yes | invalidates the token |
+| `/api/dashboard?date=YYYY-MM-DD` | GET | yes | day summary (calories, macros, health), meals, AI advice |
+| `/api/meals?date=YYYY-MM-DD` | GET | yes | meals for a day |
+| `/api/meals` | POST | yes | `{rawText?, image? (base64 data URL), date?}` → AI analysis and save (may return several meals) |
+| `/api/meals/:id` | DELETE | yes | deletes a meal |
+| `/api/settings` | GET / POST | yes | calorie, macro and water goals; `sync_token` for Apple Health |
+| `/api/user/profile` | GET | yes | username and e-mail shown in Settings |
+| `/api/water/add`, `/api/water/reset` | POST | yes | water intake counter |
+| `/api/health/history` | GET | yes | health metrics history (client method only, no UI yet) |
+| `/api/integrations/apple-health/:syncToken` | POST | sync token in URL | HealthKit data in Health Auto Export format |
 
-Autoryzacja: nagłówek `Authorization: Bearer <token>` (token sesji ważny 7 dni, odświeżany przy
-każdym żądaniu — patrz `backend/middleware/auth.js`).
+Sessions last 7 days, are extended while in use, and expire at an absolute limit set by the
+backend.
 
-## Struktura katalogów
+## Project layout
 
 ```
 Dietetyk/
-  App/                  punkt wejścia, AppState (sesja/routing)
-  Networking/           APIClient, APIError, KeychainStore, APIConfig
-  Models/                struktury Codable
-  Health/                HealthKitManager, HealthSyncService, HealthSyncPreferences
+  App/          entry point, AppState (session/routing), tabs, day navigator
+  Networking/   APIClient (+ extensions), APIError, APIConfig, KeychainStore, lenient number decoding
+  Models/       Codable models
+  Health/       HealthKitManager, HealthSyncService, HealthSyncPreferences
   Features/
-    Auth/                logowanie, 2FA, wymuszona zmiana hasła
-    Dashboard/            ekran główny
-    Meals/                lista/dodawanie posiłków
-    Settings/             cele, adres serwera, synchronizacja Apple Health, wylogowanie
+    Auth/       sign-in, 2FA, forced password change
+    Dashboard/  daily dashboard
+    Meals/      meal list, details, adding (text/photo/camera)
+    Settings/   profile, goals, Apple Health sync, backend address, sign-out
+DietetykTests/  unit tests
+project.yml     XcodeGen project definition
 ```
+
+## License
+
+[MIT](LICENSE)
